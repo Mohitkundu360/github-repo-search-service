@@ -1,71 +1,132 @@
 package com.example.github;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class GithubService {
 
-    @Autowired
-    private GithubRepositoryEntityRepository repository;
+    private static final String GITHUB_SEARCH_URL = "https://api.github.com/search/repositories";
+    private static final int MAX_QUERY_LENGTH = 256;
+    private static final int PER_PAGE = 30;
 
-    // Search and Save
-    public List<GithubRepository> searchRepositories(String query) {
-        if (query == null || query.isEmpty()) {
-            throw new IllegalArgumentException("Query parameter cannot be empty.");
-        }
+    private static final Map<String, String> SORT_FIELDS = Map.of(
+            "name", "name",
+            "language", "language",
+            "stars", "stars",
+            "forks", "forks",
+            "updated", "githubUpdatedAt");
+    private static final Set<String> DESCENDING = Set.of("stars", "forks", "updated");
 
-        String url = "https://api.github.com/search/repositories?q=" + query;
-        RestTemplate restTemplate = new RestTemplate();
+    private final GithubRepositoryEntityRepository repository;
+    private final RestClient restClient;
 
-        try {
-            GithubResponse response = restTemplate.getForObject(url, GithubResponse.class);
-            if (response == null || response.getItems().isEmpty()) {
-                throw new RuntimeException("No repositories found for the given query.");
-            }
-
-            List<GithubRepository> repositories = response.getItems();
-
-            for (GithubRepository repo : repositories) {
-                GithubRepositoryEntity existingRepo = repository.findByName(repo.getName());
-
-                if (existingRepo == null) {
-                    GithubRepositoryEntity newRepo = new GithubRepositoryEntity();
-                    newRepo.setName(repo.getName());
-                    newRepo.setHtmlUrl(repo.getHtml_url());
-                    newRepo.setDescription(repo.getDescription());
-                    repository.save(newRepo);
-                } else {
-                    existingRepo.setHtmlUrl(repo.getHtml_url());
-                    existingRepo.setDescription(repo.getDescription());
-                    repository.save(existingRepo);
-                }
-            }
-
-            return repositories;
-
-        } catch (RestClientException e) {
-            throw new RuntimeException("Error fetching data from GitHub API: " + e.getMessage());
-        }
+    public GithubService(GithubRepositoryEntityRepository repository, RestClient.Builder restClientBuilder) {
+        this.repository = repository;
+        this.restClient = restClientBuilder
+                .defaultHeader(HttpHeaders.ACCEPT, "application/vnd.github+json")
+                .build();
     }
 
-    // Retrieve with filtering and sorting
-    public List<GithubRepositoryEntity> getAllRepositories(String nameFilter, String sortBy) {
-        if (nameFilter != null && !nameFilter.isEmpty()) {
-            List<GithubRepositoryEntity> filtered = repository.findByNameContainingIgnoreCase(nameFilter);
-            if (filtered.isEmpty()) {
-                throw new RuntimeException("No repositories found for the given filter.");
+    @Transactional
+    public List<RepoView> searchAndStore(String query) {
+        String q = validateQuery(query);
+        GithubSearchResponse response = fetch(q);
+
+        List<GithubRepoDto> items = (response == null || response.items() == null) ? List.of() : response.items();
+        if (items.isEmpty()) {
+            return List.of();
+        }
+
+        Map<Long, GithubRepoDto> unique = new LinkedHashMap<>();
+        for (GithubRepoDto item : items) {
+            unique.putIfAbsent(item.id(), item);
+        }
+
+        Map<Long, GithubRepositoryEntity> existing = repository.findByGithubIdIn(unique.keySet()).stream()
+                .collect(Collectors.toMap(GithubRepositoryEntity::getGithubId, Function.identity()));
+
+        Instant now = Instant.now();
+        List<GithubRepositoryEntity> toSave = new ArrayList<>();
+        for (GithubRepoDto dto : unique.values()) {
+            GithubRepositoryEntity entity = existing.get(dto.id());
+            if (entity == null) {
+                entity = GithubRepositoryEntity.from(dto, now);
+            } else {
+                entity.updateFrom(dto, now);
             }
-            return filtered;
-        } else if (sortBy != null && !sortBy.isEmpty()) {
-            return repository.findAll(Sort.by(sortBy).ascending());
-        } else {
-            return repository.findAll();
+            toSave.add(entity);
+        }
+
+        return repository.saveAll(toSave).stream().map(RepoView::from).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<RepoView> list(String nameFilter, String sortBy) {
+        Sort sort = resolveSort(sortBy);
+        List<GithubRepositoryEntity> rows = (nameFilter == null || nameFilter.isBlank())
+                ? repository.findAll(sort)
+                : repository.findByNameContainingIgnoreCase(nameFilter.trim(), sort);
+        return rows.stream().map(RepoView::from).toList();
+    }
+
+    private String validateQuery(String query) {
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("Query must not be empty.");
+        }
+        String trimmed = query.trim();
+        if (trimmed.length() > MAX_QUERY_LENGTH) {
+            throw new IllegalArgumentException("Query must be at most " + MAX_QUERY_LENGTH + " characters.");
+        }
+        return trimmed;
+    }
+
+    private Sort resolveSort(String sortBy) {
+        Sort byId = Sort.by("id");
+        if (sortBy == null || sortBy.isBlank()) {
+            return byId;
+        }
+        String key = sortBy.trim();
+        String field = SORT_FIELDS.get(key);
+        if (field == null) {
+            throw new IllegalArgumentException(
+                    "Unsupported sortBy '" + key + "'. Allowed: " + new TreeSet<>(SORT_FIELDS.keySet()));
+        }
+        Sort.Direction direction = DESCENDING.contains(key) ? Sort.Direction.DESC : Sort.Direction.ASC;
+        return Sort.by(direction, field).and(byId);
+    }
+
+    private GithubSearchResponse fetch(String q) {
+        URI uri = UriComponentsBuilder.fromUriString(GITHUB_SEARCH_URL)
+                .queryParam("q", "{q}")
+                .queryParam("per_page", PER_PAGE)
+                .encode()
+                .buildAndExpand(Map.of("q", q))
+                .toUri();
+        try {
+            return restClient.get().uri(uri).retrieve().body(GithubSearchResponse.class);
+        } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            throw new GithubApiException("GitHub API returned HTTP " + status, status, e);
+        } catch (RestClientException e) {
+            throw new GithubApiException("Could not reach the GitHub API", 0, e);
         }
     }
 }

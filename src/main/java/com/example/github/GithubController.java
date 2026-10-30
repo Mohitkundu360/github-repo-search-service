@@ -1,8 +1,11 @@
 package com.example.github;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
@@ -10,23 +13,23 @@ import java.util.List;
 @RequestMapping("/api/github")
 public class GithubController {
 
-    @Autowired
-    private GithubService githubService;
+    private final GithubService githubService;
 
-    // POST API: Search GitHub Repositories and Save to Database
-    @PostMapping("/search")
-    public ResponseEntity<List<GithubRepository>> searchRepositories(@RequestBody GithubSearchRequest request) {
-        List<GithubRepository> repositories = githubService.searchRepositories(request.getQuery());
-        return ResponseEntity.ok(repositories);
+    public GithubController(GithubService githubService) {
+        this.githubService = githubService;
     }
 
-    // GET API: Retrieve All Repositories with Optional Filtering & Sorting
+    /** Searches GitHub, stores the results (upsert by GitHub repo id) and returns them. */
+    @PostMapping("/search")
+    public List<RepoView> search(@RequestBody GithubSearchRequest request) {
+        return githubService.searchAndStore(request.getQuery());
+    }
+
+    /** Lists stored repositories. sortBy: name, language (ascending); stars, forks, updated (descending). */
     @GetMapping("/repositories")
-    public ResponseEntity<List<GithubRepositoryEntity>> getAllRepositories(
+    public List<RepoView> list(
             @RequestParam(required = false) String nameFilter,
             @RequestParam(required = false) String sortBy) {
-
-        List<GithubRepositoryEntity> repositories = githubService.getAllRepositories(nameFilter, sortBy);
-        return ResponseEntity.ok(repositories);
+        return githubService.list(nameFilter, sortBy);
     }
 }
