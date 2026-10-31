@@ -1,6 +1,10 @@
 package com.example.github;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +30,7 @@ public class GithubService {
     private static final String GITHUB_SEARCH_URL = "https://api.github.com/search/repositories";
     private static final int MAX_QUERY_LENGTH = 256;
     private static final int PER_PAGE = 30;
+    static final int MAX_PAGE_SIZE = 100;
 
     private static final Map<String, String> SORT_FIELDS = Map.of(
             "name", "name",
@@ -79,12 +84,22 @@ public class GithubService {
     }
 
     @Transactional(readOnly = true)
-    public List<RepoView> list(String nameFilter, String sortBy) {
-        Sort sort = resolveSort(sortBy);
-        List<GithubRepositoryEntity> rows = (nameFilter == null || nameFilter.isBlank())
-                ? repository.findAll(sort)
-                : repository.findByNameContainingIgnoreCase(nameFilter.trim(), sort);
-        return rows.stream().map(RepoView::from).toList();
+    public PageResponse<RepoView> list(String nameFilter, String language, Integer minStars,
+                                       String sortBy, int page, int size) {
+        if (page < 0) {
+            throw new IllegalArgumentException("page must be 0 or greater.");
+        }
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw new IllegalArgumentException("size must be between 1 and " + MAX_PAGE_SIZE + ".");
+        }
+        if (minStars != null && minStars < 0) {
+            throw new IllegalArgumentException("minStars must be 0 or greater.");
+        }
+
+        Pageable pageable = PageRequest.of(page, size, resolveSort(sortBy));
+        Specification<GithubRepositoryEntity> spec = RepoSpecifications.filter(nameFilter, language, minStars);
+        Page<GithubRepositoryEntity> result = repository.findAll(spec, pageable);
+        return PageResponse.from(result.map(RepoView::from));
     }
 
     private String validateQuery(String query) {

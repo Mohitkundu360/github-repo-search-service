@@ -25,11 +25,18 @@ public class GithubController {
         return githubService.searchAndStore(request.getQuery());
     }
 
-    /** Lists stored repositories. sortBy: name, language (ascending); stars, forks, updated (descending). */
+    /**
+     * Lists stored repositories with optional filters and paging.
+     * sortBy: name, language (ascending); stars, forks, updated (descending). size is 1-100.
+     */
     @GetMapping("/repositories")
-    public List<RepoView> list(
+    public PageResponse<RepoView> list(
             @RequestParam(required = false) String nameFilter,
-            @RequestParam(required = false) String sortBy) {
-        return githubService.list(nameFilter, sortBy);
+            @RequestParam(required = false) String language,
+            @RequestParam(required = false) Integer minStars,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return githubService.list(nameFilter, language, minStars, sortBy, page, size);
     }
 }
