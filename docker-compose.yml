@@ -24,6 +24,7 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/githubdb
       DB_USERNAME: github
       DB_PASSWORD: ${POSTGRES_PASSWORD:-github}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     ports:
       - "8081:8080"
 

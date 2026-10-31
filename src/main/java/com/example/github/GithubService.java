@@ -5,15 +5,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestClientResponseException;
-import org.springframework.web.util.UriComponentsBuilder;
 
-import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -27,9 +21,7 @@ import java.util.stream.Collectors;
 @Service
 public class GithubService {
 
-    private static final String GITHUB_SEARCH_URL = "https://api.github.com/search/repositories";
     private static final int MAX_QUERY_LENGTH = 256;
-    private static final int PER_PAGE = 30;
     static final int MAX_PAGE_SIZE = 100;
 
     private static final Map<String, String> SORT_FIELDS = Map.of(
@@ -41,21 +33,17 @@ public class GithubService {
     private static final Set<String> DESCENDING = Set.of("stars", "forks", "updated");
 
     private final GithubRepositoryEntityRepository repository;
-    private final RestClient restClient;
+    private final GithubClient githubClient;
 
-    public GithubService(GithubRepositoryEntityRepository repository, RestClient.Builder restClientBuilder) {
+    public GithubService(GithubRepositoryEntityRepository repository, GithubClient githubClient) {
         this.repository = repository;
-        this.restClient = restClientBuilder
-                .defaultHeader(HttpHeaders.ACCEPT, "application/vnd.github+json")
-                .build();
+        this.githubClient = githubClient;
     }
 
     @Transactional
     public List<RepoView> searchAndStore(String query) {
         String q = validateQuery(query);
-        GithubSearchResponse response = fetch(q);
-
-        List<GithubRepoDto> items = (response == null || response.items() == null) ? List.of() : response.items();
+        List<GithubRepoDto> items = githubClient.searchRepositories(q);
         if (items.isEmpty()) {
             return List.of();
         }
@@ -126,22 +114,5 @@ public class GithubService {
         }
         Sort.Direction direction = DESCENDING.contains(key) ? Sort.Direction.DESC : Sort.Direction.ASC;
         return Sort.by(direction, field).and(byId);
-    }
-
-    private GithubSearchResponse fetch(String q) {
-        URI uri = UriComponentsBuilder.fromUriString(GITHUB_SEARCH_URL)
-                .queryParam("q", "{q}")
-                .queryParam("per_page", PER_PAGE)
-                .encode()
-                .buildAndExpand(Map.of("q", q))
-                .toUri();
-        try {
-            return restClient.get().uri(uri).retrieve().body(GithubSearchResponse.class);
-        } catch (RestClientResponseException e) {
-            int status = e.getStatusCode().value();
-            throw new GithubApiException("GitHub API returned HTTP " + status, status, e);
-        } catch (RestClientException e) {
-            throw new GithubApiException("Could not reach the GitHub API", 0, e);
-        }
     }
 }
