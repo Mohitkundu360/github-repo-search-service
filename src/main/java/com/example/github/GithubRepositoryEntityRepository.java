@@ -1,16 +1,13 @@
 package com.example.github;
 
-
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+import java.util.Collection;
 import java.util.List;
 
-public interface GithubRepositoryEntityRepository extends JpaRepository<GithubRepositoryEntity, Long> {
+public interface GithubRepositoryEntityRepository
+        extends JpaRepository<GithubRepositoryEntity, Long>, JpaSpecificationExecutor<GithubRepositoryEntity> {
 
-    GithubRepositoryEntity findByName(String name);
-
-    // Filter by name containing (case-insensitive)
-    List<GithubRepositoryEntity> findByNameContainingIgnoreCase(String name);
-
-    // Optional: Support for sorting via built-in findAll
+    List<GithubRepositoryEntity> findByGithubIdIn(Collection<Long> githubIds);
 }
