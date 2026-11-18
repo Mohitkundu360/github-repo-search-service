@@ -96,7 +96,9 @@ The list returns an object with `content`, `page`, `size`, `totalElements` and `
 
 Swagger UI: `/swagger-ui.html`. OpenAPI JSON: `/v3/api-docs`.
 
-![Swagger UI](docs/screenshots/swagger-ui.png)
+![Swagger UI](docs/<img width="1133" height="637" alt="Screenshot 2026-11-18 113227" src="https://github.com/user-attachments/assets/281eb2ea-6c66-418b-ab46-c5260f087c84" />)
+![Swagger UI](docs/<img width="1417" height="877" alt="Screenshot 2026-11-18 113318" src="https://github.com/user-attachments/assets/4cd17e22-54e5-40e3-86c3-0e9c916fcd5a" />)
+![Swagger UI](docs/<img width="1416" height="508" alt="Screenshot 2026-11-18 113352" src="https://github.com/user-attachments/assets/5560d9b3-bf5a-4325-b285-e1e657102e37" />)
 
 ## Database
 Flyway owns the schema: `V1` creates `github_repositories` with a unique constraint on `github_id`, `V2` adds the index `idx_repos_lang_stars` on `(lower(language), stars DESC, id)`. Hibernate runs with `ddl-auto=validate`, so the app refuses to start if the entities and the schema disagree.
